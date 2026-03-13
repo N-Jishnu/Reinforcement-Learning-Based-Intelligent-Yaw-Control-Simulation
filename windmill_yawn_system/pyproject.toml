@@ -1,0 +1,7 @@
+[tool.pyre]
+source_directories = ["d:/windmill_yawn_system"]
+search_path = [
+    "C:/Users/ramae/AppData/Local/Programs/Python/Python312/Lib/site-packages",
+    "d:/windmill_yawn_system"
+]
+python_version = "3.12"
