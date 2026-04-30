@@ -41,6 +41,8 @@ TARGET_UPDATE_EVERY = 100
 MODEL_PATH = os.path.join("rl", "model.pth")
 LOG_PATH = os.path.join("rl", "logs.csv")
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -154,7 +156,7 @@ def select_action_dqn(policy_net, state, epsilon):
     if random.random() < epsilon:
         return random.randint(0, ACTION_SIZE - 1)
     with torch.no_grad():
-        state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+        state_t = torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)
         q_values = policy_net(state_t)
         return int(torch.argmax(q_values, dim=1).item())
 
@@ -165,11 +167,11 @@ def optimize_dqn(policy_net, target_net, optimizer, replay_buffer):
 
     states, actions, rewards, next_states, dones = replay_buffer.sample(BATCH_SIZE)
 
-    states_t = torch.tensor(states, dtype=torch.float32)
-    actions_t = torch.tensor(actions, dtype=torch.int64).unsqueeze(1)
-    rewards_t = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1)
-    next_states_t = torch.tensor(next_states, dtype=torch.float32)
-    dones_t = torch.tensor(dones, dtype=torch.float32).unsqueeze(1)
+    states_t = torch.tensor(states, dtype=torch.float32, device=DEVICE)
+    actions_t = torch.tensor(actions, dtype=torch.int64, device=DEVICE).unsqueeze(1)
+    rewards_t = torch.tensor(rewards, dtype=torch.float32, device=DEVICE).unsqueeze(1)
+    next_states_t = torch.tensor(next_states, dtype=torch.float32, device=DEVICE)
+    dones_t = torch.tensor(dones, dtype=torch.float32, device=DEVICE).unsqueeze(1)
 
     current_q = policy_net(states_t).gather(1, actions_t)
     with torch.no_grad():
@@ -188,6 +190,8 @@ def optimize_dqn(policy_net, target_net, optimizer, replay_buffer):
 def train_dqn(env, dqn_episodes, steps_per_episode):
     policy_net = QNetwork(input_size=STATE_SIZE, output_size=ACTION_SIZE)
     target_net = QNetwork(input_size=STATE_SIZE, output_size=ACTION_SIZE)
+    policy_net.to(DEVICE)
+    target_net.to(DEVICE)
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()
 
@@ -265,6 +269,7 @@ def main():
     os.makedirs("rl", exist_ok=True)
 
     env = YawRLEnvironment()
+    print(f"Using device: {DEVICE}")
 
     random_baseline = evaluate_random_policy(env, episodes=args.eval_random_episodes)
     print(f"Random policy average reward: {random_baseline:.3f}")
