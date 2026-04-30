@@ -12,7 +12,9 @@ class WindField:
         turbulence_intensity=0.02,
         gust_probability=0.008,
         gust_strength=(4.0, 10.0),
-        shift_probability=0.003
+        shift_probability=0.003,
+        direction_noise_std_deg=3.0,
+        shift_interval_steps=(50, 100)
     ):
         """
         High-fidelity wind model using:
@@ -39,6 +41,8 @@ class WindField:
         self.gust_probability = gust_probability
         self.gust_strength = gust_strength
         self.shift_probability = shift_probability
+        self.direction_noise_std_deg = direction_noise_std_deg
+        self.shift_interval_steps = shift_interval_steps
 
         # Internal disturbance states
         self.gust_remaining = 0
@@ -46,6 +50,11 @@ class WindField:
         self.gust_duration = 0
 
         self.direction_shift = 0.0
+        self.shift_events = []
+        self.next_shift_step = np.random.randint(
+            self.shift_interval_steps[0],
+            self.shift_interval_steps[1] + 1
+        )
 
     # ----------------------------------
     # Load Dataset
@@ -82,10 +91,7 @@ class WindField:
             self.turbulence_intensity * speed
         )
 
-        dir_noise = np.random.normal(
-            0,
-            self.turbulence_intensity * 20
-        )
+        dir_noise = np.random.normal(0, self.direction_noise_std_deg)
 
         speed = max(speed + speed_noise, 0.1)
         direction = (direction + dir_noise) % 360
@@ -126,13 +132,19 @@ class WindField:
     # Directional Shift Model
     # ----------------------------------
 
-    def _apply_direction_shifts(self, direction):
+    def _apply_direction_shifts(self, direction, t_idx):
 
-        if np.random.rand() < self.shift_probability:
+        if t_idx >= self.next_shift_step:
 
             shift = np.random.choice([-1, 1]) * np.random.uniform(15, 35)
 
             self.direction_shift += shift
+            self.shift_events.append(t_idx)
+
+            self.next_shift_step += np.random.randint(
+                self.shift_interval_steps[0],
+                self.shift_interval_steps[1] + 1
+            )
 
         # decay shift slowly (prevents drift explosion)
         self.direction_shift *= 0.999
@@ -157,9 +169,9 @@ class WindField:
 
         speed = self._apply_gusts(speed)
 
-        direction = self._apply_direction_shifts(direction)
+        direction = self._apply_direction_shifts(direction, t_idx)
 
-        # Clip unrealistic values
-        speed = np.clip(speed, 0.1, 30)
+        # Keep wind speed in requested operating range
+        speed = np.clip(speed, 3.0, 15.0)
 
         return float(speed), float(direction)
