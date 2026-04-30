@@ -1,0 +1,71 @@
+Reinforcement Learning Based Intelligent Yaw Control Simulation
+
+Section 1: Problem Definition
+The goal is to maximize turbine power while minimizing unnecessary yaw movement. Wind direction changes continuously and yaw motors have mechanical limits, so naive tracking can increase wear. The project compares three controllers (Rule, PID, RL) under the same wind traces to evaluate energy, power, and control behavior.
+
+Section 2: Simulation Model
+Wind is generated at 1 second time resolution with direction in [0, 360] deg and speed in [3, 15] m/s. Direction noise is Gaussian with standard deviation in the required range, and abrupt shifts occur every 50 to 100 steps. Turbine yaw dynamics include delayed actuation, inertia smoothing, and rotation constraints that prevent unrealistic jumps.
+
+Section 3: RL Formulation
+The environment state is:
+[wind_direction, wind_speed, yaw_angle, misalignment, wind_direction_change]
+All features are normalized to [0, 1].
+
+Action space:
+0 = rotate left, 1 = rotate right, 2 = hold.
+
+Reward:
+reward = power_normalized - 0.1 * abs(yaw_change) - 0.05 * direction_switching
+
+Episode length is 1000 steps. The trained DQN network uses 5 inputs, hidden layers 64 and 64, and 3 outputs.
+
+Section 4: Dual Mode Power Explanation
+The same controller trajectories are evaluated in two output modes:
+
+1) Normalized mode (used for RL training and reward):
+power = 0.5 * wind_speed^3 * cos(misalignment)^3
+
+2) Physical mode (used for reporting):
+power = 0.5 * rho * A * Cp * wind_speed^3 * cos(misalignment)^3
+with rho = 1.225 kg/m^3, Cp = 0.4, R = 40 m, and A = pi * R^2.
+
+This separation keeps learning stable while preserving physically interpretable final results.
+
+Section 5: Results and Comparison
+Evaluation uses 10 runs x 1000 steps for each controller: Rule, PID, RL.
+Metrics include:
+- Total energy
+- Average power
+- Yaw movement count
+- Oscillation count
+- Mean and standard deviation across runs
+
+Generated artifacts:
+- Normalized training graph: visualization/plots/normalized_reward_vs_episodes.png
+- Physical energy graph: visualization/plots/physical_energy_comparison.png
+- Physical power graph: visualization/plots/physical_power_comparison.png
+- Baseline runs table: evaluation/results.csv
+- Statistical summary: evaluation/analysis_summary.csv
+
+Performance Comparison Table (from evaluation/results.csv):
+Columns:
+- run
+- controller
+- total_energy_normalized
+- average_power_normalized
+- total_energy_physical
+- average_power_physical
+- yaw_movement_count
+- oscillation_count
+
+Statistical Summary Table (from evaluation/analysis_summary.csv):
+For each controller and metric:
+- mean
+- standard deviation
+
+Discussion
+Controllers should be interpreted under both modes:
+- Normalized mode indicates training suitability and policy learning behavior.
+- Physical mode provides paper-ready energy and power values with units.
+
+In the current evaluation output, RL demonstrates lower yaw movement in some runs, while energy performance depends on the checkpoint quality and seed schedule. The framework now supports reproducible re-evaluation with fixed seeds and model path selection.
