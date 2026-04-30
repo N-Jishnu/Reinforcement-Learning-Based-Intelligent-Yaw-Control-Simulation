@@ -34,7 +34,7 @@ Q_GAMMA = 0.99
 Q_BINS = [24, 12, 24, 24, 24]
 
 DQN_GAMMA = 0.99
-DQN_LEARNING_RATE = 5e-4
+DQN_LEARNING_RATE = 3e-4
 BUFFER_SIZE = 50000
 BATCH_SIZE = 128
 TARGET_UPDATE_EVERY = 250
@@ -90,10 +90,11 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-def epsilon_by_episode(episode, total_episodes):
-    decay_span = min(total_episodes - 1, EPSILON_DECAY_EPISODES)
-    ratio = min(episode / max(decay_span, 1), 1.0)
-    return EPSILON_START - (EPSILON_START - EPSILON_END) * ratio
+def epsilon_by_episode(ep):
+    if ep >= EPSILON_DECAY_EPISODES:
+        return EPSILON_END
+    frac = ep / EPSILON_DECAY_EPISODES
+    return EPSILON_START + frac * (EPSILON_END - EPSILON_START)
 
 
 def discretize_state(state):
@@ -126,7 +127,7 @@ def train_q_learning(env, q_episodes, steps_per_episode):
     for episode in range(q_episodes):
         state, _ = env.reset()
         s_idx = discretize_state(state)
-        epsilon = epsilon_by_episode(episode, q_episodes)
+        epsilon = epsilon_by_episode(episode)
         total_reward = 0.0
 
         for _ in range(steps_per_episode):
@@ -166,7 +167,7 @@ def select_action_dqn(policy_net, state, epsilon):
 
 
 def optimize_dqn(policy_net, target_net, optimizer, replay_buffer, global_step):
-    if global_step < TRAIN_START_STEPS:
+    if global_step <= TRAIN_START_STEPS:
         return None
     if len(replay_buffer) < BATCH_SIZE:
         return None
@@ -187,9 +188,10 @@ def optimize_dqn(policy_net, target_net, optimizer, replay_buffer, global_step):
     loss = nn.MSELoss()(current_q, target_q)
 
     optimizer.zero_grad()
-    loss.backward()
-    nn.utils.clip_grad_norm_(policy_net.parameters(), GRAD_CLIP_NORM)
-    optimizer.step()
+    if global_step > TRAIN_START_STEPS:
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy_net.parameters(), GRAD_CLIP_NORM)
+        optimizer.step()
 
     return float(loss.item())
 
@@ -211,7 +213,7 @@ def train_dqn(env, dqn_episodes, steps_per_episode):
 
     for episode in range(dqn_episodes):
         state, _ = env.reset()
-        epsilon = epsilon_by_episode(episode, dqn_episodes)
+        epsilon = epsilon_by_episode(episode)
         total_reward = 0.0
 
         for _ in range(steps_per_episode):
@@ -302,7 +304,7 @@ def main():
                 "episode": i + 1,
                 "episode_reward": float(reward),
                 "average_reward_50": float(np.mean(q_rewards[max(0, i - 49): i + 1])),
-                "epsilon": float(epsilon_by_episode(i, args.q_episodes)),
+                "epsilon": float(epsilon_by_episode(i)),
             }
         )
     for i, reward in enumerate(dqn_rewards):
@@ -312,7 +314,7 @@ def main():
                 "episode": i + 1,
                 "episode_reward": float(reward),
                 "average_reward_50": float(np.mean(dqn_rewards[max(0, i - 49): i + 1])),
-                "epsilon": float(epsilon_by_episode(i, args.dqn_episodes)),
+                "epsilon": float(epsilon_by_episode(i)),
             }
         )
     write_logs(logs)
