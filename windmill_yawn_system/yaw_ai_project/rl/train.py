@@ -22,21 +22,24 @@ STATE_SIZE = 5
 ACTION_SIZE = 3
 
 DEFAULT_Q_EPISODES = 500
-DEFAULT_DQN_EPISODES = 1200
+DEFAULT_DQN_EPISODES = 2200
 DEFAULT_STEPS_PER_EPISODE = 1000
 
 EPSILON_START = 1.0
-EPSILON_END = 0.1
+EPSILON_END = 0.05
+EPSILON_DECAY_EPISODES = 1500
 
 Q_LEARNING_RATE = 0.05
 Q_GAMMA = 0.99
 Q_BINS = [24, 12, 24, 24, 24]
 
 DQN_GAMMA = 0.99
-DQN_LEARNING_RATE = 1e-3
-BUFFER_SIZE = 10000
-BATCH_SIZE = 64
-TARGET_UPDATE_EVERY = 100
+DQN_LEARNING_RATE = 5e-4
+BUFFER_SIZE = 50000
+BATCH_SIZE = 128
+TARGET_UPDATE_EVERY = 250
+TRAIN_START_STEPS = 2000
+GRAD_CLIP_NORM = 5.0
 
 MODEL_PATH = os.path.join("rl", "model.pth")
 LOG_PATH = os.path.join("rl", "logs.csv")
@@ -88,7 +91,8 @@ class ReplayBuffer:
 
 
 def epsilon_by_episode(episode, total_episodes):
-    ratio = episode / max(total_episodes - 1, 1)
+    decay_span = min(total_episodes - 1, EPSILON_DECAY_EPISODES)
+    ratio = min(episode / max(decay_span, 1), 1.0)
     return EPSILON_START - (EPSILON_START - EPSILON_END) * ratio
 
 
@@ -161,7 +165,9 @@ def select_action_dqn(policy_net, state, epsilon):
         return int(torch.argmax(q_values, dim=1).item())
 
 
-def optimize_dqn(policy_net, target_net, optimizer, replay_buffer):
+def optimize_dqn(policy_net, target_net, optimizer, replay_buffer, global_step):
+    if global_step < TRAIN_START_STEPS:
+        return None
     if len(replay_buffer) < BATCH_SIZE:
         return None
 
@@ -182,6 +188,7 @@ def optimize_dqn(policy_net, target_net, optimizer, replay_buffer):
 
     optimizer.zero_grad()
     loss.backward()
+    nn.utils.clip_grad_norm_(policy_net.parameters(), GRAD_CLIP_NORM)
     optimizer.step()
 
     return float(loss.item())
@@ -216,7 +223,7 @@ def train_dqn(env, dqn_episodes, steps_per_episode):
             state = next_state
             total_reward += reward
 
-            loss = optimize_dqn(policy_net, target_net, optimizer, replay_buffer)
+            loss = optimize_dqn(policy_net, target_net, optimizer, replay_buffer, global_step)
             if loss is not None:
                 losses.append(loss)
 
