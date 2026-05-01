@@ -111,26 +111,24 @@ class YawRLEnvironment(gym.Env):
         if action_dir != 0 and self.prev_action_dir != 0 and action_dir != self.prev_action_dir:
             switched_direction = 1
 
-        switch_penalty = 0.35 * switched_direction
+        switch_penalty = 0.20 * switched_direction
 
         rapid_flip_penalty = 0.0
         if switched_direction and abs(getattr(self, "prev_yaw_change", 0.0)) > 0.0:
-            rapid_flip_penalty = 0.15
+            rapid_flip_penalty = 0.08
 
-        movement_penalty = 0.10 * abs(yaw_change_applied)
+        movement_penalty = 0.08 * abs(yaw_change_applied)
 
         alignment_bonus = 0.12 if abs(misalignment) <= 5.0 else 0.0
-        hold_bonus = 0.05 if action_dir == 0 and abs(misalignment) <= 5.0 else 0.0
 
         reward = (
             1.20 * power_normalized
             + 0.60 * alignment_term
-            - 1.10 * (misalignment_norm ** 2)
+            - misalignment_penalty
             - movement_penalty
             - switch_penalty
             - rapid_flip_penalty
             + alignment_bonus
-            + hold_bonus
         )
 
         self.prev_action_dir = action_dir
