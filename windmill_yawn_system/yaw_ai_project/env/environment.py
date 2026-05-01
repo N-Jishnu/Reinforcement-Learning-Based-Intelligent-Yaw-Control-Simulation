@@ -104,26 +104,26 @@ class YawRLEnvironment(gym.Env):
 
         alignment_term = max(np.cos(np.radians(misalignment)) ** 3, 0.0)
 
-        misalignment_norm = abs(misalignment) / 180.0
-        misalignment_penalty = 1.10 * (misalignment_norm ** 2)
+misalignment_norm = abs(misalignment) / 180.0
+        misalignment_penalty = 0.60 * (misalignment_norm ** 2)
 
         switched_direction = 0
         if action_dir != 0 and self.prev_action_dir != 0 and action_dir != self.prev_action_dir:
             switched_direction = 1
 
-        switch_penalty = 0.20 * switched_direction
+        switch_penalty = 0.15 * switched_direction
 
         rapid_flip_penalty = 0.0
         if switched_direction and abs(getattr(self, "prev_yaw_change", 0.0)) > 0.0:
-            rapid_flip_penalty = 0.08
+            rapid_flip_penalty = 0.05
 
-        movement_penalty = 0.08 * abs(yaw_change_applied)
+        movement_penalty = 0.06 * abs(yaw_change_applied)
 
-        alignment_bonus = 0.12 if abs(misalignment) <= 5.0 else 0.0
+        alignment_bonus = 0.15 if abs(misalignment) <= 5.0 else 0.0
 
         reward = (
-            1.20 * power_normalized
-            + 0.60 * alignment_term
+            1.40 * power_normalized
+            + 0.50 * alignment_term
             - misalignment_penalty
             - movement_penalty
             - switch_penalty
