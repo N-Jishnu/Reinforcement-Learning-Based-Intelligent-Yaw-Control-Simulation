@@ -104,7 +104,7 @@ class YawRLEnvironment(gym.Env):
 
         alignment_term = max(np.cos(np.radians(misalignment)) ** 3, 0.0)
 
-misalignment_norm = abs(misalignment) / 180.0
+        misalignment_norm = abs(misalignment) / 180.0
         misalignment_penalty = 0.60 * (misalignment_norm ** 2)
 
         switched_direction = 0
