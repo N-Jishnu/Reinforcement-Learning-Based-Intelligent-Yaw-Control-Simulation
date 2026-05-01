@@ -96,10 +96,10 @@ Simulation -> RL Environment -> RL Training -> Baselines -> Dual-Mode Evaluation
 ```python
 reward = (
     1.20 * power_normalized
-    + 0.40 * alignment_term
-    - 0.70 * (misalignment_norm ** 2)
-    - 0.12 * abs(yaw_change_applied)
-    - 0.20 * switched_direction
+    + 0.60 * alignment_term
+    - misalignment_penalty
+    - movement_penalty
+    - switch_penalty
     - rapid_flip_penalty
     + alignment_bonus
 )
@@ -108,6 +108,9 @@ reward = (
 with:
 
 - `alignment_term = max(cos(misalignment_rad)^3, 0.0)`
+- `misalignment_penalty = 1.10 * (abs(misalignment)/180)^2`
+- `movement_penalty = 0.08 * abs(yaw_change_applied)`
+- `switch_penalty = 0.25 * switched_direction`
 - `rapid_flip_penalty = 0.08` if direction flips while previous yaw change was nonzero
 - `alignment_bonus = 0.12` if `abs(misalignment) <= 5 deg`
 
@@ -116,7 +119,7 @@ with:
 - DQN episodes: `2200`
 - Q-learning episodes: `500`
 - Steps per episode: `1000`
-- DQN learning rate: `5e-4`
+- DQN learning rate: `3e-4`
 - Gamma: `0.99`
 - Epsilon: `1.0 -> 0.05`, decay over first `1500` episodes
 - Replay buffer: `50000`
@@ -188,6 +191,22 @@ Control behavior (mean):
 
 Note: RL currently reduces movement but underperforms PID/Rule in energy on local baseline outputs. Reward/training updates were applied to improve this in the next retrain cycle.
 
+### Latest retrain status (new config run)
+
+From the current `rl/logs.csv` generated with updated reward/training configuration:
+
+- Logged rows: `2700`
+  - Q-learning episodes: `500`
+  - DQN episodes: `2200`
+- Epsilon schedule verified in logs:
+  - starts at `1.0`
+  - decays linearly to about `0.05` by episode `1500`
+  - remains `0.05` thereafter
+- Current DQN rolling reward remains low in this run:
+  - `average_reward_50` at final episode is negative
+
+Interpretation: the code/config update is correctly applied, but this particular training run did not yet achieve stable high reward and needs another tuning/retrain iteration.
+
 ---
 
 ## 7) How to Run
@@ -251,3 +270,40 @@ streamlit run dashboard/app.py
   - RL energy >= PID
   - RL yaw movement < PID
   - RL oscillation substantially reduced vs previous RL checkpoint
+
+---
+
+## 10) Update Timeline
+
+### Phase A - Foundation Complete
+- Implemented wind, turbine, and power simulation modules.
+- Added dual-mode power equations (`normalized`, `physical`).
+- Built Gym-style RL environment with 5D normalized state and 3 discrete actions.
+
+### Phase B - Training and Evaluation Stack
+- Added Q-learning baseline and DQN trainer.
+- Added model checkpoint + training logs outputs (`rl/model.pth`, `rl/logs.csv`).
+- Added baseline comparison pipeline (Rule/PID/RL) and statistics (`evaluation/results.csv`, `evaluation/analysis_summary.csv`).
+
+### Phase C - Visualization and Reporting
+- Added normalized and physical plots under `visualization/plots`.
+- Added Streamlit dashboard (`dashboard/app.py`) with robust path inputs.
+- Added paper draft (`paper/document`) with all required sections.
+
+### Phase D - Reward/Training Optimization Updates (Most Recent)
+- Updated reward shaping in `env/environment.py` to:
+  - stronger alignment term (`+0.60 * alignment_term`)
+  - stronger misalignment penalty (`1.10 * normalized_error^2`)
+  - lower movement penalty coefficient (`0.08`)
+  - stronger switch penalty (`0.25`) + rapid flip penalty (`0.08`)
+  - alignment bonus (`+0.12` for `|misalignment| <= 5 deg`)
+- Updated DQN training constants in `rl/train.py`:
+  - episodes `2200`
+  - learning rate `3e-4`
+  - epsilon `1.0 -> 0.05` with decay cap at `1500`
+  - replay buffer `50000`, batch size `128`
+  - train start `2000`, target update `250`, grad clip `5.0`
+
+### Phase E - Current Outcome Snapshot
+- Configuration updates are active and verified from code and logs.
+- Latest run indicates training still unstable (final DQN rolling reward negative), so additional retraining/tuning is still pending.
