@@ -122,11 +122,11 @@ class YawRLEnvironment(gym.Env):
         alignment_bonus = 0.15 if abs(misalignment) <= 5.0 else 0.0
 
         reward = (
-            1.40 * power_normalized
-            + 0.50 * alignment_term
-            - misalignment_penalty
-            - movement_penalty
-            - switch_penalty
+            1.60 * power_normalized
+            + 0.55 * alignment_term
+            - 0.50 * (misalignment_norm ** 2)
+            - 0.05 * abs(yaw_change_applied)
+            - 0.18 * switched_direction
             - rapid_flip_penalty
             + alignment_bonus
         )

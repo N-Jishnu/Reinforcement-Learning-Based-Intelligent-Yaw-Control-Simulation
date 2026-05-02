@@ -36,7 +36,7 @@ Q_BINS = [24, 12, 24, 24, 24]
 DQN_GAMMA = 0.99
 DQN_LEARNING_RATE = 3e-4
 BUFFER_SIZE = 50000
-BATCH_SIZE = 128
+BATCH_SIZE = 256
 TARGET_UPDATE_EVERY = 250
 TRAIN_START_STEPS = 2000
 GRAD_CLIP_NORM = 5.0
@@ -57,11 +57,11 @@ class QNetwork(nn.Module):
     def __init__(self, input_size=5, output_size=3):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_size, 64),
+            nn.Linear(input_size, 128),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(64, output_size),
+            nn.Linear(128, output_size),
         )
 
     def forward(self, x):
@@ -188,10 +188,9 @@ def optimize_dqn(policy_net, target_net, optimizer, replay_buffer, global_step):
     loss = nn.MSELoss()(current_q, target_q)
 
     optimizer.zero_grad()
-    if global_step > TRAIN_START_STEPS:
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy_net.parameters(), GRAD_CLIP_NORM)
-        optimizer.step()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(policy_net.parameters(), GRAD_CLIP_NORM)
+    optimizer.step()
 
     return float(loss.item())
 
