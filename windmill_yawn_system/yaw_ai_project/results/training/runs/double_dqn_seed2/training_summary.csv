@@ -1,0 +1,2 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+double_dqn,double_dqn_seed2,2,80,300,24000,23499,134.0412874999456,-77.48492254127568,-75.7362840647391,-75.6310611822699,5.95423240262272,30.193307076026326,17667,cpu,2026-11-02T21:03:41,reduced experimental budget

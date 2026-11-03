@@ -43,6 +43,7 @@ class YawRLEnvironment(gym.Env):
         self.current_step = 0
         self.prev_wind_direction = 0.0
         self.prev_action_dir = 0
+        self.prev_yaw_change = 0.0
 
     def _state(self):
         idx = self.current_step % len(self.wind_speed_series)
@@ -71,12 +72,14 @@ class YawRLEnvironment(gym.Env):
             duration=MAX_STEPS,
             dt=TIME_STEP,
             data_path=self.data_path,
+            seed=seed,
         )
 
         self.turbine = TurbineModel(initial_yaw=0.0)
         self.current_step = 0
         self.prev_action_dir = 0
         self.prev_wind_direction = float(self.wind_direction_series[0])
+        self.prev_yaw_change = 0.0
 
         obs, _, _, _ = self._state()
         return obs, {}
@@ -100,18 +103,38 @@ class YawRLEnvironment(gym.Env):
         power = compute_power(wind_speed, misalignment, mode="normalized")
         power_normalized = power / POWER_MAX_NORMALIZED_MODE
 
+        alignment_term = max(np.cos(np.radians(misalignment)) ** 3, 0.0)
+
+        misalignment_norm = abs(misalignment) / 180.0
+        misalignment_penalty = 0.60 * (misalignment_norm ** 2)
+
         switched_direction = 0
         if action_dir != 0 and self.prev_action_dir != 0 and action_dir != self.prev_action_dir:
             switched_direction = 1
 
+        switch_penalty = 0.15 * switched_direction
+
+        rapid_flip_penalty = 0.0
+        if switched_direction and abs(getattr(self, "prev_yaw_change", 0.0)) > 0.0:
+            rapid_flip_penalty = 0.05
+
+        movement_penalty = 0.06 * abs(yaw_change_applied)
+
+        alignment_bonus = 0.15 if abs(misalignment) <= 5.0 else 0.0
+
         reward = (
-            power_normalized
-            - 0.1 * abs(yaw_change_applied)
-            - 0.05 * switched_direction
+            1.50 * power_normalized
+            + 0.80 * alignment_term
+            - 0.70 * (misalignment_norm ** 2)
+            - 0.06 * abs(yaw_change_applied)
+            - 0.30 * switched_direction
+            - rapid_flip_penalty
+            + alignment_bonus
         )
 
         self.prev_action_dir = action_dir
         self.prev_wind_direction = wind_direction
+        self.prev_yaw_change = yaw_change_applied
         self.current_step += 1
 
         terminated = self.current_step >= MAX_STEPS
@@ -122,5 +145,12 @@ class YawRLEnvironment(gym.Env):
             "misalignment": float(misalignment),
             "yaw_change": float(yaw_change_applied),
             "switched_direction": int(switched_direction),
+            "alignment_term": float(alignment_term),
+            "alignment_bonus": float(alignment_bonus),
+            "rapid_flip_penalty": float(rapid_flip_penalty),
+            # Added for physical-power and diagnostic evaluation.  These
+            # fields are additive and do not change the environment dynamics.
+            "wind_speed": float(wind_speed),
+            "wind_direction": float(wind_direction),
         }
         return obs, float(reward), terminated, truncated, info

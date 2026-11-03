@@ -5,11 +5,15 @@ from simulation.turbine_model import TurbineModel
 from simulation.power_model import compute_power
 
 
-def generate_wind_series(duration, dt, data_path):
+def generate_wind_series(duration, dt, data_path, seed=None):
     if dt != 1.0:
         raise ValueError("Time step must be fixed at 1 second (dt=1.0)")
 
-    wind = WindField(duration=duration, dt=dt, data_path=data_path)
+    # A seeded Generator is used only when a seed is supplied.  The default
+    # path keeps the original global-NumPy randomness for backward
+    # compatibility with existing scripts.
+    rng = np.random.default_rng(seed) if seed is not None else np.random
+    wind = WindField(duration=duration, dt=dt, data_path=data_path, rng=rng)
     steps = int(duration / dt)
 
     wind_speed = np.zeros(steps, dtype=float)

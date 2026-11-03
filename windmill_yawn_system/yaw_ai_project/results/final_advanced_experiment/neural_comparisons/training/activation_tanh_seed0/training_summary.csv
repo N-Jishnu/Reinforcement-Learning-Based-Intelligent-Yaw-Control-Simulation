@@ -1,0 +1,2 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+activation_tanh,activation_tanh_seed0,0,80,300,24000,23499,70.14720589993522,-62.256785809830205,-74.68155302158127,-74.68155302158127,5.120549142673308,13.37378941538362,17667,cpu,2026-11-02T23:08:00,reduced experimental budget
