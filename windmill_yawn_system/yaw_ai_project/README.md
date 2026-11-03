@@ -514,4 +514,28 @@ The exact test count and result are reported in the final change summary.
 
 - [`docs/NEURAL_NETWORK.md`](docs/NEURAL_NETWORK.md) - full neural-network,
   DQN, Double DQN, metrics, ablation and reproducibility documentation.
+- [`docs/LSTM_DQN.md`](docs/LSTM_DQN.md) - causal sequence replay, LSTM gates
+  and temporal attention.
+- [`docs/FINAL_ADVANCED_EXPERIMENTS.md`](docs/FINAL_ADVANCED_EXPERIMENTS.md) -
+  five-seed Colab results for LSTM, attention, optimizers and activations.
 - `paper/document` - original paper draft.
+
+---
+
+## 16) Advanced neural-network experiments
+
+The project also includes separate, non-destructive experimental paths for
+temporal learning and controlled feedforward comparisons. They do not change
+the original DQN/Double-DQN implementation or overwrite its results.
+
+| Experiment | Entrypoint | Output location |
+|---|---|---|
+| LSTM-DQN / Attention-LSTM-DQN | `rl/temporal_experiments.py` | `results/colab_final_advanced_experiment/temporal_experiments/` |
+| Optimizer comparison | `rl/nn_comparisons.py --kind optimizer` | `results/colab_final_advanced_experiment/neural_comparisons/` |
+| Activation comparison | `rl/nn_comparisons.py --kind activation` | `results/colab_final_advanced_experiment/neural_comparisons/` |
+| Comparative plots | `rl/visualize_nn_comparisons.py` | `results/colab_final_advanced_experiment/plots/` |
+
+The imported five-seed Colab bundle uses the documented reduced profile
+(80 episodes x 300 interaction steps), five evaluation episodes per model, and
+identical seeded evaluation conditions inside each comparison. Results are
+reduced-budget measurements, not claims about asymptotic performance.

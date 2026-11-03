@@ -494,3 +494,44 @@ separately and does not use training reward as evidence of controller quality.
 - CUDA determinism is best-effort, not guaranteed across hardware.
 - No claim is made that Double DQN outperforms DQN unless the measured
   multi-seed results support it.
+
+---
+
+## 18. Temporal and controlled-comparison extensions
+
+The original feedforward network remains `5 -> 128 -> 128 -> 3`, with a linear
+Q-value output. Additional experiments are implemented in separate modules so
+their configuration cannot alter the original DQN or Double-DQN results.
+
+### LSTM-DQN
+
+`rl/temporal_agents.py` accepts a causal history of 20 existing five-feature
+observations. It processes `[batch, time, features]` tensors with `nn.LSTM`,
+passes the last hidden representation to a linear three-action Q head, and
+uses independent online and target networks. Histories are reset per episode,
+left-padded only with the initial observation, and saved atomically in replay;
+therefore they cannot include observations from a previous episode or future
+wind states. TD targets include `(1 - done)`, so terminal sequences never
+bootstrap. Gradient clipping, checkpoint save/load, TD loss and gradient-norm
+logging are retained.
+
+### Attention-LSTM-DQN
+
+The optional attention model scores every LSTM output over the sequence,
+normalizes scores with softmax across time, and feeds the weighted temporal
+representation to the same linear Q head. Evaluation writes attention weights
+to CSV and the plot utility renders heatmaps. Attention weights indicate where
+the network placed relative emphasis; they are not evidence of an improvement
+unless evaluation results demonstrate one.
+
+### Optimizer and activation controls
+
+`rl/nn_comparisons.py` keeps the feedforward topology, replay, target network,
+environment, reward, batch size and evaluation protocol fixed. Optimizer runs
+compare Adam and RMSProp at `3e-4` with SGD+momentum at its explicitly recorded
+`1e-3` rate. Activation runs compare ReLU, Leaky ReLU and Tanh while keeping a
+linear output head. CSVs record TD loss, gradient norm, reward, physical power,
+misalignment, control stability, inference time and wall-clock time.
+
+See `LSTM_DQN.md` for gate-level explanations and
+`FINAL_ADVANCED_EXPERIMENTS.md` for imported five-seed results.

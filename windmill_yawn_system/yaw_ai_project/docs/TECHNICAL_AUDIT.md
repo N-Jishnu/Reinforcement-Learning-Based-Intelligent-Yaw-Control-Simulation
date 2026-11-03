@@ -43,3 +43,27 @@ The original tabular Q-learning baseline remains available through `rl/train.py`
 3. Render plots from the resulting CSV files.
 4. Run the five-seed reduced experiment, then controller evaluation using the trained checkpoints.
 5. Use TensorBoard with `tensorboard --logdir results/tensorboard` when a run was started with `--tensorboard-dir results/tensorboard`.
+
+---
+
+## Post-audit update: 3 November 2026
+
+The audit scope was extended without modifying the original DQN agent:
+
+- `rl/temporal_agents.py` now provides sequence-safe LSTM-DQN and
+  Attention-LSTM-DQN agents, online/target networks, terminal masking,
+  checkpointing, gradient clipping and attention extraction.
+- `rl/temporal_trainer.py` and `rl/temporal_experiments.py` provide temporal
+  training/evaluation and isolated result directories.
+- `rl/nn_comparisons.py` provides controlled Adam/RMSProp/SGD-momentum and
+  ReLU/Leaky-ReLU/Tanh studies.
+- `evaluation/unified_comparison.py` merges available result summaries without
+  rewriting their source CSVs.
+- `tests/test_temporal_agents.py` adds tests for LSTM dimensions, sequence
+  isolation, terminal masking, normalized attention, checkpoint restoration and
+  configurable linear Q outputs.
+
+A complete five-seed advanced result bundle imported from Colab is preserved at
+`results/colab_final_advanced_experiment/`. Its results and limitations are
+documented in `FINAL_ADVANCED_EXPERIMENTS.md`; it supersedes neither legacy nor
+local partial results.
