@@ -1,20 +1,45 @@
+"""Streamlit dashboard for yaw control, neural-network training and evaluation.
+
+The original controller-trace view is preserved.  Two new areas are added:
+
+* ``NEURAL NETWORK TRAINING ANALYSIS`` - architecture, parameter summary,
+  reward/loss/epsilon/Q-value/gradient curves, DQN vs Double DQN, ablation and
+  multi-seed results.
+* ``CONTROLLER PERFORMANCE COMPARISON`` - Random, Q-learning, DQN, Double DQN,
+  Rule and PID in both normalized and physical power modes.
+
+Training metrics and evaluation metrics are always shown in separate sections
+so that a training reward is never confused with physical power.
+"""
+
+from __future__ import annotations
+
 import os
 import sys
+from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
 import torch
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from rl.train import QNetwork
+from rl.agents import QNetwork, infer_hidden_sizes
+from simulation.power_model import compute_power
 from simulation.turbine_model import TurbineModel
 from simulation.wind_model import generate_wind_series
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def angle_diff(a_deg, b_deg):
     return (a_deg - b_deg + 180.0) % 360.0 - 180.0
@@ -39,40 +64,50 @@ def build_state(wd, ws, yaw, mis, wd_change):
 
 
 def load_model(model_path):
+    """Load a DQN checkpoint and infer its real hidden-layer widths."""
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(model_path, map_location=device)
-    model = QNetwork(5, 3).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    checkpoint = torch.load(model_path, map_location=device)
+    state_dict = checkpoint.get("model_state_dict", {})
+    hidden_sizes = infer_hidden_sizes(state_dict) or (128, 128)
+    model = QNetwork(5, 3, hidden_sizes=hidden_sizes).to(device)
+    model.load_state_dict(state_dict)
     model.eval()
-    return model, device
+    return model, device, checkpoint
 
 
-def policy_action(controller, model, device, wd, ws, yaw, mis, wd_change):
+def policy_action(controller, models, device, wd, ws, yaw, mis, wd_change, rng):
     if controller == "Rule":
         if abs(mis) > 10.0:
-            return np.sign(mis) * 2.0
+            return float(np.sign(mis) * 2.0)
         return 0.0
     if controller == "PID":
-        cmd = 0.5 * mis + 0.1 * wd_change
-        return float(np.clip(cmd, -2.0, 2.0))
+        command = 0.5 * mis + 0.1 * wd_change
+        return float(np.clip(command, -2.0, 2.0))
+    if controller == "Random":
+        return float(rng.choice([-2.0, 0.0, 2.0]))
+
+    model = models.get(controller)
     state = build_state(wd, ws, yaw, mis, wd_change)
     with torch.no_grad():
         s = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
-        a = int(torch.argmax(model(s), dim=1).item())
-    if a == 0:
+        action = int(torch.argmax(model(s), dim=1).item())
+    if action == 0:
         return -2.0
-    if a == 1:
+    if action == 1:
         return 2.0
     return 0.0
 
 
-def simulate_trace(controller, model, device, data_path, steps=300):
-    wind_speed, wind_dir = generate_wind_series(steps, 1.0, data_path)
+def simulate_trace(controller, models, device, data_path, steps=300, seed=42):
+    wind_speed, wind_dir = generate_wind_series(steps, 1.0, data_path, seed=seed)
     turbine = TurbineModel(initial_yaw=0.0)
+    rng = np.random.default_rng(seed)
 
     yaw = []
     mis = []
     p_norm = []
+    p_phys = []
     prev_wd = float(wind_dir[0])
 
     for t in range(steps):
@@ -81,95 +116,518 @@ def simulate_trace(controller, model, device, data_path, steps=300):
         y = turbine.get_yaw_angle()
         m = angle_diff(wd, y)
         wd_change = angle_diff(wd, prev_wd)
-        cmd = policy_action(controller, model, device, wd, ws, y, m, wd_change)
+        command = policy_action(controller, models, device, wd, ws, y, m, wd_change, rng)
 
-        target = normalize_deg(y + cmd)
+        target = normalize_deg(y + command)
         turbine.step(target, 1.0)
         y_new = turbine.get_yaw_angle()
         m_new = angle_diff(wd, y_new)
-        power_norm = 0.5 * (ws ** 3) * max(np.cos(np.radians(m_new)) ** 3, 0.0)
+        p_norm.append(compute_power(ws, m_new, mode="normalized"))
+        p_phys.append(compute_power(ws, m_new, mode="physical"))
 
         yaw.append(y_new)
         mis.append(m_new)
-        p_norm.append(power_norm)
         prev_wd = wd
 
-    return np.arange(steps), wind_dir, np.array(yaw), np.array(p_norm), np.array(mis)
+    return (
+        np.arange(steps),
+        np.asarray(wind_dir),
+        np.asarray(yaw),
+        np.asarray(p_norm),
+        np.asarray(p_phys),
+        np.asarray(mis),
+    )
 
+
+def read_csv(path):
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        frame = pd.read_csv(path)
+    except Exception:
+        return None
+    return frame if not frame.empty else None
+
+
+def rolling(series, window=20):
+    return pd.Series(series).rolling(window=window, min_periods=1).mean()
+
+
+def new_figure(width=10, height=4):
+    fig, ax = plt.subplots(figsize=(width, height))
+    ax.grid(True, alpha=0.3)
+    return fig, ax
+
+
+# ---------------------------------------------------------------------------
+# Trace section (original functionality)
+# ---------------------------------------------------------------------------
+
+def render_trace_section(models, device, data_path):
+    st.header("Controller Trace")
+    st.caption(
+        "A single wind trace is replayed through Rule, PID, Random, DQN or Double DQN. "
+        "The trace uses the requested controller only; comparison statistics are below."
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        options = ["Rule", "PID", "Random"]
+        options.extend([name for name in ("DQN", "Double DQN") if name in models])
+        controller = st.selectbox("Controller", options)
+    with col2:
+        steps = st.slider("Trace length (steps)", min_value=100, max_value=1000, value=300, step=50)
+    with col3:
+        seed = st.number_input("Trace seed", min_value=0, max_value=1_000_000, value=42, step=1)
+
+    t, wind_dir, yaw, p_norm, p_phys, mis = simulate_trace(
+        controller,
+        models,
+        device,
+        data_path=data_path,
+        steps=steps,
+        seed=int(seed),
+    )
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 9))
+    axes[0].plot(t, wind_dir, label="Wind direction (deg)", alpha=0.6)
+    axes[0].plot(t, yaw, label=f"{controller} yaw (deg)")
+    axes[0].set_ylabel("Angle (deg)")
+    axes[0].set_title("Wind vs Yaw")
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend()
+
+    axes[1].plot(t, p_norm, color="tab:green", label="Normalized power")
+    axes[1].set_ylabel("Normalized power")
+    axes[1].set_title("Power Output (normalized mode)")
+    axes[1].grid(True, alpha=0.3)
+
+    axes[2].plot(t, p_phys / 1000.0, color="tab:orange", label="Physical power (kW)")
+    axes[2].set_xlabel("Time step")
+    axes[2].set_ylabel("Power (kW)")
+    axes[2].set_title("Power Output (physical mode)")
+    axes[2].grid(True, alpha=0.3)
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.metric("Mean absolute misalignment", f"{np.mean(np.abs(mis)):.2f} deg")
+    st.metric("Mean normalized power", f"{np.mean(p_norm):.2f}")
+
+
+# ---------------------------------------------------------------------------
+# Neural-network training analysis
+# ---------------------------------------------------------------------------
+
+def render_training_section():
+    st.header("NEURAL NETWORK TRAINING ANALYSIS")
+    st.caption(
+        "All curves below are generated from real training logs. Step-level metrics "
+        "(loss, Q-values, gradient norm) are logged per optimisation step; reward and "
+        "epsilon are episode-level."
+    )
+
+    metrics_dir = Path(
+        st.text_input(
+            "Training metrics directory",
+            value=str(PROJECT_ROOT / "results" / "training"),
+        )
+    )
+    architecture_model = Path(
+        st.text_input(
+            "Architecture checkpoint",
+            value=str(PROJECT_ROOT / "rl" / "model.pth"),
+        )
+    )
+
+    # Architecture ---------------------------------------------------------
+    st.subheader("1. Network architecture and parameters")
+    if architecture_model.exists():
+        try:
+            model, device, checkpoint = load_model(architecture_model)
+            st.text(model.describe())
+            st.dataframe(pd.DataFrame(model.layer_summary()), width="stretch")
+            st.write(
+                {
+                    "algorithm": checkpoint.get("algorithm", "unknown"),
+                    "device": str(device),
+                    "optimizer": "Adam",
+                    "loss": "MSE",
+                }
+            )
+        except Exception as exc:
+            st.warning(f"Could not load architecture checkpoint: {exc}")
+    else:
+        st.info(f"Checkpoint not found: {architecture_model}")
+
+    architecture_image = PROJECT_ROOT / "results" / "plots" / "network_architecture.png"
+    if architecture_image.exists():
+        st.image(str(architecture_image), caption="Actual Q-network topology")
+
+    # Training curves ------------------------------------------------------
+    st.subheader("2. Training curves")
+    dqn_episodes = read_csv(metrics_dir / "dqn_episodes.csv")
+    dqn_steps = read_csv(metrics_dir / "dqn_metrics.csv")
+    double_episodes = read_csv(metrics_dir / "double_dqn_episodes.csv")
+    double_steps = read_csv(metrics_dir / "double_dqn_metrics.csv")
+
+    if dqn_episodes is None and double_episodes is None:
+        st.info(
+            f"No training CSV files found in {metrics_dir}. Run "
+            "`python rl/train.py --algorithm both ...` first."
+        )
+        return
+
+    tabs = st.tabs(
+        [
+            "Reward",
+            "TD loss",
+            "Exploration & Q-values",
+            "Gradient norm",
+            "DQN vs Double DQN",
+            "Ablation study",
+            "Multi-seed evaluation",
+        ]
+    )
+
+    with tabs[0]:
+        fig, ax = new_figure()
+        for frame, label in ((dqn_episodes, "DQN"), (double_episodes, "Double DQN")):
+            if frame is None:
+                continue
+            ax.plot(frame["episode"], frame["episode_reward"], alpha=0.2, label=f"{label} reward")
+            ax.plot(frame["episode"], frame["moving_avg_50"], linewidth=2, label=f"{label} avg(50)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Episode reward")
+        ax.set_title("Episode reward and moving average")
+        ax.legend()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    with tabs[1]:
+        fig, ax = new_figure()
+        for frame, label in ((dqn_steps, "DQN"), (double_steps, "Double DQN")):
+            if frame is None:
+                continue
+            ax.plot(frame["global_step"], rolling(frame["loss"]), linewidth=2, label=f"{label} loss (rolling 20)")
+        ax.set_xlabel("Global environment step")
+        ax.set_ylabel("MSE TD loss")
+        ax.set_title("Temporal-difference loss")
+        ax.legend()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    with tabs[2]:
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+        for frame, label in ((dqn_episodes, "DQN"), (double_episodes, "Double DQN")):
+            if frame is not None and "epsilon" in frame:
+                axes[0].plot(frame["episode"], frame["epsilon"], linewidth=2, label=label)
+        axes[0].set_xlabel("Episode")
+        axes[0].set_ylabel("Epsilon")
+        axes[0].set_title("Exploration schedule")
+        axes[0].grid(True, alpha=0.3)
+        axes[0].legend()
+
+        for frame, label in ((dqn_steps, "DQN"), (double_steps, "Double DQN")):
+            if frame is None:
+                continue
+            axes[1].plot(frame["global_step"], frame["avg_q"], linewidth=1, label=f"{label} mean chosen Q")
+            axes[1].plot(frame["global_step"], frame["max_q"], linewidth=1, alpha=0.6, label=f"{label} max chosen Q")
+        axes[1].set_xlabel("Global environment step")
+        axes[1].set_ylabel("Q-value")
+        axes[1].set_title("Q-value progression")
+        axes[1].grid(True, alpha=0.3)
+        axes[1].legend()
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    with tabs[3]:
+        fig, ax = new_figure()
+        for frame, label in ((dqn_steps, "DQN"), (double_steps, "Double DQN")):
+            if frame is None:
+                continue
+            ax.plot(frame["global_step"], rolling(frame["grad_norm"]), linewidth=2, label=f"{label} grad norm (rolling 20)")
+        ax.set_xlabel("Global environment step")
+        ax.set_ylabel("L2 gradient norm")
+        ax.set_title("Gradient norm")
+        ax.legend()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    with tabs[4]:
+        summary = read_csv(metrics_dir / "training_summary.csv")
+        if summary is not None:
+            columns = [
+                column
+                for column in (
+                    "algorithm",
+                    "seed",
+                    "episodes",
+                    "total_steps",
+                    "total_optimization_steps",
+                    "wall_time_s",
+                    "final_avg_reward_50",
+                    "mean_loss",
+                    "mean_grad_norm",
+                    "total_trainable_parameters",
+                    "device",
+                )
+                if column in summary
+            ]
+            st.dataframe(summary[columns], width="stretch")
+
+        if dqn_episodes is not None or double_episodes is not None:
+            fig, ax = new_figure()
+            for frame, label in ((dqn_episodes, "DQN"), (double_episodes, "Double DQN")):
+                if frame is not None:
+                    ax.plot(frame["episode"], frame["moving_avg_50"], linewidth=2, label=label)
+            ax.set_xlabel("Episode")
+            ax.set_ylabel("Moving average reward (50)")
+            ax.set_title("DQN vs Double DQN - learning curves")
+            ax.legend()
+            st.pyplot(fig)
+            plt.close(fig)
+
+    with tabs[5]:
+        ablation = read_csv(PROJECT_ROOT / "results" / "evaluation" / "ablation_summary.csv")
+        if ablation is None:
+            ablation = read_csv(PROJECT_ROOT / "results" / "evaluation" / "ablation_results.csv")
+        if ablation is None:
+            st.info("No ablation results found. Run `python rl/experiments.py --mode ablation`.")
+        else:
+            st.dataframe(ablation, width="stretch")
+            if "algorithm" in ablation and "eval_episode_reward_mean" in ablation:
+                fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+                for ax, column, title in zip(
+                    axes,
+                    (
+                        "eval_episode_reward_mean",
+                        "eval_average_power_normalized_mean",
+                        "eval_average_power_physical_mean",
+                    ),
+                    ("Evaluation reward", "Normalized power", "Physical power (W)"),
+                ):
+                    if column not in ablation:
+                        continue
+                    ax.bar(ablation["algorithm"], ablation[column], alpha=0.85)
+                    ax.set_title(title)
+                    ax.grid(True, axis="y", alpha=0.3)
+                    ax.tick_params(axis="x", rotation=20)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+    with tabs[6]:
+        multi_seed = read_csv(PROJECT_ROOT / "results" / "evaluation" / "multi_seed_summary.csv")
+        if multi_seed is None:
+            multi_seed = read_csv(PROJECT_ROOT / "results" / "evaluation" / "multi_seed_results.csv")
+        if multi_seed is None:
+            st.info("No multi-seed results found. Run `python rl/experiments.py --mode multi_seed`.")
+        else:
+            st.dataframe(multi_seed, width="stretch")
+            if "algorithm" in multi_seed and "eval_episode_reward_mean" in multi_seed:
+                fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+                specs = (
+                    ("eval_episode_reward", "Evaluation reward"),
+                    ("eval_average_power_normalized", "Normalized power"),
+                    ("eval_average_power_physical", "Physical power (W)"),
+                )
+                for ax, (prefix, title) in zip(axes, specs):
+                    mean_col = f"{prefix}_mean"
+                    std_col = f"{prefix}_std"
+                    if mean_col not in multi_seed:
+                        continue
+                    errors = multi_seed[std_col] if std_col in multi_seed else None
+                    ax.bar(
+                        multi_seed["algorithm"],
+                        multi_seed[mean_col],
+                        yerr=errors,
+                        capsize=4,
+                        alpha=0.85,
+                    )
+                    ax.set_title(title)
+                    ax.grid(True, axis="y", alpha=0.3)
+                    ax.tick_params(axis="x", rotation=20)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Controller comparison
+# ---------------------------------------------------------------------------
+
+def render_comparison_section():
+    st.header("CONTROLLER PERFORMANCE COMPARISON")
+    st.caption(
+        "These are evaluation metrics on identical seeded wind traces, not training "
+        "rewards. Both normalized and physical power are reported."
+    )
+
+    summary_path = Path(
+        st.text_input(
+            "Evaluation summary CSV",
+            value=str(PROJECT_ROOT / "results" / "evaluation" / "controller_comparison_summary.csv"),
+        )
+    )
+    frame = read_csv(summary_path)
+    if frame is None:
+        st.info(
+            f"No evaluation summary found at {summary_path}. Run "
+            "`python evaluation/agent_evaluation.py --q-episodes 500` first."
+        )
+    else:
+        display_columns = [
+            column
+            for column in (
+                "controller",
+                "episodes",
+                "episode_reward_mean",
+                "average_power_normalized_mean",
+                "average_power_physical_mean",
+                "mean_abs_misalignment_mean",
+                "yaw_movement_frequency_mean",
+                "control_stability_mean",
+                "time_within_10_deg_mean",
+                "inference_time_ms_mean",
+            )
+            if column in frame
+        ]
+        st.dataframe(frame[display_columns], width="stretch")
+
+        if "controller" in frame:
+            fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
+            if "average_power_normalized_mean" in frame:
+                axes[0].bar(frame["controller"], frame["average_power_normalized_mean"], alpha=0.85)
+                axes[0].set_title("Average normalized power")
+                axes[0].set_ylabel("Normalized power")
+            if "average_power_physical_mean" in frame:
+                axes[1].bar(frame["controller"], frame["average_power_physical_mean"] / 1000.0, alpha=0.85)
+                axes[1].set_title("Average physical power")
+                axes[1].set_ylabel("Power (kW)")
+            for ax in axes:
+                ax.grid(True, axis="y", alpha=0.3)
+                ax.tick_params(axis="x", rotation=20)
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+            if "mean_abs_misalignment_mean" in frame:
+                axes[0].bar(frame["controller"], frame["mean_abs_misalignment_mean"], alpha=0.85)
+                axes[0].set_title("Mean absolute misalignment")
+                axes[0].set_ylabel("Degrees")
+            if "yaw_movement_frequency_mean" in frame:
+                axes[1].bar(frame["controller"], frame["yaw_movement_frequency_mean"], alpha=0.85)
+                axes[1].set_title("Yaw movement frequency")
+                axes[1].set_ylabel("Fraction of steps")
+            for ax in axes:
+                ax.grid(True, axis="y", alpha=0.3)
+                ax.tick_params(axis="x", rotation=20)
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+    with st.expander("Legacy continuous Rule/PID comparison (preserved results)"):
+        legacy_path = PROJECT_ROOT / "results" / "controller_comparison_summary.csv"
+        legacy = read_csv(legacy_path)
+        if legacy is None:
+            st.info(f"Legacy summary not found: {legacy_path}")
+        else:
+            st.dataframe(legacy, width="stretch")
+            st.caption(
+                "These are the project's original results where Rule and PID apply "
+                "continuous yaw commands. The new comparison projects their commands "
+                "onto the discrete action space so that all controllers share the same "
+                "environment interaction."
+            )
+
+
+def render_advanced_neural_section():
+    """Render optional temporal/controlled-comparison artifacts without replacing the dashboard."""
+    st.header("ADVANCED NEURAL NETWORK EXPERIMENTS")
+    st.caption("Sections appear only when their independently generated CSV artifacts are available.")
+    base = PROJECT_ROOT / "results"
+    tabs = st.tabs(["LSTM-DQN", "Optimizers", "Activations", "Temporal attention", "Unified comparison"])
+    with tabs[0]:
+        st.markdown("**Architecture:** 20 causal observations → LSTM → linear three-Q-value head. "
+                    "Episode resets discard history; initial observations are left-padded.")
+        frame = read_csv(base / "temporal_experiments" / "evaluation" / "temporal_summary.csv")
+        if frame is None: st.info("Run `python rl/temporal_experiments.py` to produce LSTM-DQN results.")
+        else: st.dataframe(frame, width="stretch")
+    with tabs[1]:
+        frame = read_csv(base / "neural_comparisons" / "optimizer_summary.csv")
+        if frame is None: st.info("Run `python rl/nn_comparisons.py --kind optimizer`.")
+        else: st.dataframe(frame, width="stretch")
+    with tabs[2]:
+        frame = read_csv(base / "neural_comparisons" / "activation_summary.csv")
+        if frame is None: st.info("Run `python rl/nn_comparisons.py --kind activation`.")
+        else: st.dataframe(frame, width="stretch")
+    with tabs[3]:
+        attention = PROJECT_ROOT / "results" / "temporal_experiments" / "attention"
+        paths = sorted(attention.glob("*.csv")) if attention.exists() else []
+        if not paths: st.info("Attention heatmaps appear after Attention-LSTM-DQN evaluation.")
+        else:
+            path = st.selectbox("Attention run", paths, format_func=lambda p: p.name)
+            frame = read_csv(path); lag_cols = [c for c in frame.columns if c.startswith("lag_")]
+            if frame is not None and lag_cols:
+                fig, ax = plt.subplots(figsize=(10, 4)); image = ax.imshow(frame[lag_cols].head(100).T, aspect="auto", cmap="viridis")
+                ax.set_xlabel("Decision step"); ax.set_ylabel("History position"); ax.set_title("Temporal attention weights")
+                fig.colorbar(image, ax=ax, label="Softmax weight"); st.pyplot(fig); plt.close(fig)
+    with tabs[4]:
+        frame = read_csv(base / "unified_evaluation" / "unified_comparison.csv")
+        if frame is None: st.info("Run `python evaluation/unified_comparison.py` after experiments complete.")
+        else: st.dataframe(frame, width="stretch")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
     st.set_page_config(page_title="Yaw Control Dashboard", layout="wide")
     st.title("Wind Turbine Yaw Control Dashboard")
-    st.caption("Normalized and physical results are displayed separately.")
+    st.caption("Neural-network training analysis and multi-controller evaluation.")
 
-    model_path_default = os.path.join(PROJECT_ROOT, "rl", "model.pth")
-    data_path_default = os.path.join(PROJECT_ROOT, "data", "era5_chennai.csv")
+    data_path_default = str(PROJECT_ROOT / "data" / "era5_chennai.csv")
     data_path = st.text_input("Wind dataset path", value=data_path_default)
-
     if not os.path.exists(data_path):
         st.error(f"Dataset not found: {data_path}")
-        st.info("Set 'Wind dataset path' to a valid CSV containing wind_speed and wind_direction columns.")
+        st.info("Set a valid CSV containing wind_speed and wind_direction columns.")
         return
 
-    model_path = st.text_input("RL model path", value=model_path_default)
-    model_available = os.path.exists(model_path)
-
-    model = None
-    device = torch.device("cpu")
-    if model_available:
-        model, device = load_model(model_path)
-        st.write(f"Inference device: `{device}`")
-    else:
-        st.warning(
-            f"Model not found at `{model_path}`. "
-            "Rule/PID dashboards still work. RL trace will be disabled until model is available."
-        )
+    dqn_path_default = str(PROJECT_ROOT / "results" / "models" / "dqn.pth")
+    double_path_default = str(PROJECT_ROOT / "results" / "models" / "double_dqn.pth")
+    if not os.path.exists(dqn_path_default):
+        dqn_path_default = str(PROJECT_ROOT / "rl" / "model.pth")
 
     col1, col2 = st.columns(2)
     with col1:
-        controller_options = ["Rule", "PID"] if not model_available else ["RL", "Rule", "PID"]
-        default_index = 0 if not model_available else 0
-        controller = st.selectbox("Controller trace", controller_options, index=default_index)
+        dqn_path = st.text_input("DQN model path", value=dqn_path_default)
     with col2:
-        steps = st.slider("Trace length (steps)", min_value=100, max_value=1000, value=300, step=50)
+        double_path = st.text_input("Double DQN model path", value=double_path_default)
 
-    t, wind_dir, yaw, p_norm, mis = simulate_trace(controller, model, device, data_path=data_path, steps=steps)
+    models = {}
+    device = torch.device("cpu")
+    for label, path in (("DQN", dqn_path), ("Double DQN", double_path)):
+        if os.path.exists(path):
+            try:
+                model, device, _ = load_model(path)
+                models[label] = model
+            except Exception as exc:
+                st.warning(f"Could not load {label} model: {exc}")
+        else:
+            st.warning(f"{label} checkpoint not found: {path}")
 
-    fig1, ax1 = plt.subplots(figsize=(10, 4))
-    ax1.plot(t, wind_dir, label="Wind direction (deg)", alpha=0.6)
-    ax1.plot(t, yaw, label=f"{controller} yaw (deg)")
-    ax1.set_xlabel("Time step")
-    ax1.set_ylabel("Angle (deg)")
-    ax1.set_title("Wind vs Yaw")
-    ax1.grid(True, alpha=0.3)
-    ax1.legend()
-    st.pyplot(fig1)
-
-    fig2, ax2 = plt.subplots(figsize=(10, 4))
-    ax2.plot(t, p_norm, color="tab:green")
-    ax2.set_xlabel("Time step")
-    ax2.set_ylabel("Normalized power")
-    ax2.set_title("Power Output (Normalized Mode)")
-    ax2.grid(True, alpha=0.3)
-    st.pyplot(fig2)
-
-    results_path_default = os.path.join(PROJECT_ROOT, "evaluation", "results.csv")
-    results_path = st.text_input("Evaluation results path", value=results_path_default)
-    if os.path.exists(results_path):
-        df = pd.read_csv(results_path)
-        summary = (
-            df.groupby("controller", as_index=False)
-            .agg(
-                avg_power_norm=("average_power_normalized", "mean"),
-                avg_power_phys=("average_power_physical", "mean"),
-                total_energy_phys=("total_energy_physical", "mean"),
-            )
-        )
-        st.subheader("Controller Comparison")
-        st.dataframe(summary)
-    else:
-        st.warning(f"Missing evaluation file: {results_path}")
-        st.info("Run `python evaluation/baseline.py` to generate evaluation/results.csv, or set a valid CSV path above.")
+    render_trace_section(models, device, data_path)
+    st.divider()
+    render_training_section()
+    st.divider()
+    render_advanced_neural_section()
+    st.divider()
+    render_comparison_section()
 
 
 if __name__ == "__main__":

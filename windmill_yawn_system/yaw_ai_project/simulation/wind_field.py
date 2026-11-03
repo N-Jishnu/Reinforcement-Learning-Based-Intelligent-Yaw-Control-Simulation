@@ -2,6 +2,18 @@ import numpy as np
 import pandas as pd
 
 
+def _randint(rng, low, high_inclusive):
+    """Integer draw that works with both ``np.random`` and ``Generator``.
+
+    ``np.random.randint`` and ``Generator.integers`` have different names and
+    half-open interval conventions, so the two cases are normalised here.
+    """
+
+    if hasattr(rng, "integers"):
+        return int(rng.integers(low, high_inclusive + 1))
+    return int(rng.randint(low, high_inclusive + 1))
+
+
 class WindField:
 
     def __init__(
@@ -14,7 +26,8 @@ class WindField:
         gust_strength=(4.0, 10.0),
         shift_probability=0.003,
         direction_noise_std_deg=3.0,
-        shift_interval_steps=(50, 100)
+        shift_interval_steps=(50, 100),
+        rng=None
     ):
         """
         High-fidelity wind model using:
@@ -27,6 +40,9 @@ class WindField:
         self.duration = duration
         self.dt = dt
         self.requested_steps = int(duration / dt)
+        # Optional NumPy RNG.  The default preserves the original global-RNG
+        # behaviour, while experiments can pass a seeded Generator.
+        self.rng = rng if rng is not None else np.random
 
         self._load_real_data(data_path)
 
@@ -51,9 +67,10 @@ class WindField:
 
         self.direction_shift = 0.0
         self.shift_events = []
-        self.next_shift_step = np.random.randint(
+        self.next_shift_step = _randint(
+            self.rng,
             self.shift_interval_steps[0],
-            self.shift_interval_steps[1] + 1
+            self.shift_interval_steps[1],
         )
 
     # ----------------------------------
@@ -86,12 +103,12 @@ class WindField:
 
     def _apply_turbulence(self, speed, direction):
 
-        speed_noise = np.random.normal(
+        speed_noise = self.rng.normal(
             0,
             self.turbulence_intensity * speed
         )
 
-        dir_noise = np.random.normal(0, self.direction_noise_std_deg)
+        dir_noise = self.rng.normal(0, self.direction_noise_std_deg)
 
         speed = max(speed + speed_noise, 0.1)
         direction = (direction + dir_noise) % 360
@@ -116,13 +133,13 @@ class WindField:
 
         else:
 
-            if np.random.rand() < self.gust_probability:
+            if self.rng.random() < self.gust_probability:
 
-                self.gust_strength_active = np.random.uniform(
+                self.gust_strength_active = self.rng.uniform(
                     *self.gust_strength
                 )
 
-                self.gust_duration = np.random.randint(10, 40)
+                self.gust_duration = _randint(self.rng, 10, 39)
 
                 self.gust_remaining = self.gust_duration
 
@@ -136,14 +153,15 @@ class WindField:
 
         if t_idx >= self.next_shift_step:
 
-            shift = np.random.choice([-1, 1]) * np.random.uniform(15, 35)
+            shift = self.rng.choice([-1, 1]) * self.rng.uniform(15, 35)
 
             self.direction_shift += shift
             self.shift_events.append(t_idx)
 
-            self.next_shift_step += np.random.randint(
+            self.next_shift_step += _randint(
+                self.rng,
                 self.shift_interval_steps[0],
-                self.shift_interval_steps[1] + 1
+                self.shift_interval_steps[1],
             )
 
         # decay shift slowly (prevents drift explosion)
