@@ -1,0 +1,3 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+optimizer_adam,optimizer_adam_seed3,3,80,300,24000,23499,78.20325649995357,-80.34138683924482,-75.13388849556803,-75.13388849556803,5.237900909738209,27.124748650527838,17667,cpu,2026-11-02T22:42:50,reduced experimental budget
+optimizer_adam,optimizer_adam_seed3,3,80,300,24000,23499,72.56428924900001,-83.93428118098578,-76.27397787147142,-76.27397787147142,5.214562397271545,27.843628885375463,17667,cuda,2026-11-03T06:11:11,reduced experimental budget

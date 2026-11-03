@@ -1,0 +1,3 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+activation_tanh,activation_tanh_seed3,3,80,300,24000,23499,73.02134780003689,-101.54811245120862,-74.71991874573072,-73.63475345146057,5.332671662203388,13.549926955520643,17667,cpu,2026-11-02T23:11:52,reduced experimental budget
+activation_tanh,activation_tanh_seed3,3,80,300,24000,23499,75.25595062500042,-101.54811245120862,-74.71991874573072,-73.63475345146057,5.332671448084881,13.549926921855585,17667,cuda,2026-11-03T06:41:44,reduced experimental budget

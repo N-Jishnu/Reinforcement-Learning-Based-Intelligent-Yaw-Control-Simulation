@@ -1,0 +1,3 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+optimizer_sgd_momentum,optimizer_sgd_momentum_seed2,2,80,300,24000,23499,59.36007699999027,-82.13490098786471,-77.08565175916267,-76.95500037716668,4.67648044798056,26.35738127584371,17667,cpu,2026-11-02T22:52:40,reduced experimental budget
+optimizer_sgd_momentum,optimizer_sgd_momentum_seed2,2,80,300,24000,23499,66.72038535599995,-80.3253138538565,-79.00640568770113,-78.90767544716255,4.581230402722986,26.38381198860898,17667,cuda,2026-11-03T06:21:56,reduced experimental budget

@@ -1,0 +1,3 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+activation_relu,activation_relu_seed1,1,80,300,24000,23499,71.32594439992681,-65.15230236607384,-74.66630487249047,-74.57360539538996,5.602646023886988,29.220957378109173,17667,cpu,2026-11-02T22:57:09,reduced experimental budget
+activation_relu,activation_relu_seed1,1,80,300,24000,23499,72.94732384100007,-55.87665347191492,-73.78812766888129,-73.78812766888129,5.537417414346699,28.87229973042422,17667,cuda,2026-11-03T06:26:47,reduced experimental budget
