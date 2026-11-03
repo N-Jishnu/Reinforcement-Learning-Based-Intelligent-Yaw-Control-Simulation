@@ -26,7 +26,7 @@ from simulation.controller import (
 # -----------------------------
 
 USE_ERA5_DATA = True   # ⭐ Toggle real vs synthetic
-ERA5_PATH = "data/era5_wind.csv"
+ERA5_PATH = os.path.join(os.path.dirname(__file__), "data", "era5_chennai.csv")
 
 
 # -----------------------------

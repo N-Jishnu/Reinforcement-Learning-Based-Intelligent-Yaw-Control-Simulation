@@ -1,105 +1,138 @@
 # Reinforcement Learning Based Intelligent Yaw Control Simulation
 
-This repository implements a full wind-turbine yaw-control pipeline:
+A wind-turbine yaw-control simulation with tabular Q-learning, Deep Q-Network
+(DQN), Double DQN, and classical Rule/PID baselines. The upgrade documented
+here focuses on Artificial Neural Networks and Deep Learning: architecture
+inspection, real training metrics, TensorBoard, ablation experiments,
+multi-seed evaluation, tests and documentation.
 
-Simulation -> RL Environment -> RL Training -> Baselines -> Dual-Mode Evaluation -> Visualization -> Dashboard -> Paper Draft
-
----
-
-## 1) Project Status
-
-### Completed
-
-- Member 1: Wind and turbine simulation
-  - Wind generator with directional noise and abrupt shifts
-  - Turbine yaw dynamics with delay, inertia, and yaw-rate constraints
-  - Dual-mode power model (normalized + physical)
-- Member 2: RL environment
-  - Gym-style environment with normalized 5D state and discrete 3-action policy
-  - 1000-step episodes, normalized-power reward
-- Member 3: RL training
-  - Q-learning baseline + DQN implementation
-  - Replay buffer, target network updates, logging, model save
-- Member 4: Baseline comparison and evaluation
-  - Rule, PID, RL compared over 10 runs x 1000 steps
-  - Metrics in normalized and physical modes
-  - Statistical summary generation
-- Member 5: Visualization and documentation
-  - Training/evaluation plots
-  - Streamlit dashboard
-  - Paper draft document with required sections
+Simulation -> RL Environment -> Neural-Network Training -> Baselines ->
+Dual-Mode Evaluation -> Visualization -> Dashboard -> Documentation
 
 ---
 
-## 2) Repository Structure
+## 1) What is in this repository
 
-- `simulation/`
-  - `wind_field.py` - wind disturbances and real-data driven generator
-  - `wind_model.py` - array outputs + simulation loop helper
-  - `turbine_model.py` - yaw actuator dynamics
-  - `power_model.py` - `compute_power(..., mode)` for normalized/physical
-- `env/`
-  - `environment.py` - RL environment (`YawRLEnvironment`)
-- `rl/`
-  - `train.py` - Q-learning + DQN training pipeline
-  - `evaluate.py` - DQN vs random policy evaluation
-  - `plot_training.py` - training convergence plots
-  - `model.pth` - trained model output
-  - `logs.csv` - training logs output
-- `evaluation/`
-  - `baseline.py` - Rule/PID/RL comparative runs
-  - `analysis.py` - mean/std statistical summary
-  - `results.csv` - per-run metrics output
-  - `analysis_summary.csv` - statistical output
-  - `compare_controllers.py` and `plot_controller_comparison.py`
-- `visualization/`
-  - `generate_plots.py`
-  - `plots/` - generated figures
-- `dashboard/`
-  - `app.py` - Streamlit demo
-- `paper/`
-  - `document` - research-paper draft content
+| Area | Implementation |
+|---|---|
+| Wind simulation | ERA5-driven wind field with turbulence, gusts and abrupt direction shifts |
+| Turbine model | Yaw actuator delay, inertia and rate limits |
+| Power model | Normalized mode for RL, physical mode for reporting |
+| Baselines | Random, tabular Q-learning, Rule-based, PID |
+| Deep RL | Standard DQN and Double DQN in PyTorch |
+| Neural network | `5 -> 128 -> 128 -> 3`, ReLU hidden layers, linear output |
+| Training metrics | Actual TD loss, actual gradient norm, Q-values, epsilon, timing |
+| Experimentation | Ablation study and multi-seed evaluation |
+| Dashboard | Streamlit trace view, neural-network analysis, controller comparison |
+
+The simulation, state space, action space and reward function are unchanged.
+Existing commands and output files remain valid unless explicitly pointed at
+new paths.
 
 ---
 
-## 3) Final Execution Flow
+## 2) System architecture
 
-1. Simulation -> RL Environment -> RL Training
-2. Simulation -> Baselines
-3. RL Model + Baselines -> Evaluation (normalized + physical)
-4. Evaluation -> Visualization + Dashboard + Paper
+```text
+data/era5_chennai.csv
+        |
+        v
+simulation/wind_field.py   (turbulence + gusts + direction shifts)
+        |
+        v
+simulation/wind_model.py   (seeded wind series)
+        |
+        v
+env/environment.py         (5-D state, 3 actions, yaw dynamics, reward)
+        |
+        +---------------------------+
+        |                           |
+        v                           v
+tabular Q-learning          PyTorch Q-network
+(Q-table)                   (5 -> 128 -> 128 -> 3)
+                                    |
+                        +-----------+-----------+
+                        |                       |
+                     DQN                  Double DQN
+                (replay + target)   (replay + target + decoupled selection)
+                        |                       |
+                        +-----------+-----------+
+                                    |
+                                    v
+                evaluation/agent_evaluation.py
+        Random | Q-learning | DQN | Double DQN | Rule | PID
+                                    |
+                                    v
+        results/ CSV + results/plots/ PNG + Streamlit dashboard
+```
 
 ---
 
-## 4) Core Technical Configuration
+## 3) Neural network architecture
 
-### Wind and Physics
+| Property | Value |
+|---|---|
+| Input | 5 normalized state values |
+| Hidden layer 1 | 128 neurons, ReLU |
+| Hidden layer 2 | 128 neurons, ReLU |
+| Output | 3 Q-values (left, right, hold) |
+| Total trainable parameters | **17,667** |
+| Weight/bias init | PyTorch `Linear` defaults (Kaiming-uniform / uniform) |
+| Optimizer | Adam |
+| Learning rate | `3e-4` |
+| Loss | MSE |
+| Discount factor | `0.99` |
+| Gradient clipping | L2 norm, `5.0` |
 
-- Timestep: `1.0 s`
-- Wind speed range: `[3, 15] m/s`
-- Direction noise: Gaussian, std `3 deg`
-- Direction shifts: every `50-100` steps
-- Yaw max rate: `2 deg/s`
-- Yaw inertia: `0.15`
-- Actuation delay: `3 steps`
+Print and visualize the real network:
 
-### RL Environment
+```bash
+python rl/architecture.py --output results/plots/network_architecture.png
+```
 
-- State (normalized):
-  - `[wind_direction, wind_speed, yaw_angle, misalignment, wind_direction_change]`
-- Action space (discrete):
-  - `0=left`, `1=right`, `2=hold` (command step `2 deg`)
-- Episode length: `1000 steps`
+See [`docs/NEURAL_NETWORK.md`](docs/NEURAL_NETWORK.md) for the full
+mathematical and implementation description.
 
-### Reward (latest version)
+---
+
+## 4) DQN and Double DQN
+
+### Standard DQN target
+
+```text
+y = r + gamma * max_a' Q_target(s', a') * (1 - done)
+```
+
+### Double DQN target
+
+```text
+a* = argmax_a' Q_online(s', a')
+y  = r + gamma * Q_target(s', a*) * (1 - done)
+```
+
+For terminal transitions the future term is zero. The online network selects
+the next action; the target network evaluates it. Experience replay,
+epsilon-greedy exploration, target-network synchronisation and gradient
+clipping are retained in both algorithms.
+
+The implementation lives in `rl/agents.py`:
+
+- `QNetwork` - the neural network.
+- `ReplayBuffer` - fixed-capacity experience replay.
+- `DQNAgent` - standard DQN and the no-replay / no-target ablations.
+- `DoubleDQNAgent` - Double DQN target rule.
+
+---
+
+## 5) Reward (unchanged)
 
 ```python
 reward = (
-    1.20 * power_normalized
-    + 0.60 * alignment_term
-    - misalignment_penalty
-    - movement_penalty
-    - switch_penalty
+    1.50 * power_normalized
+    + 0.80 * alignment_term
+    - 0.70 * (misalignment_norm ** 2)
+    - 0.06 * abs(yaw_change_applied)
+    - 0.30 * switched_direction
     - rapid_flip_penalty
     + alignment_bonus
 )
@@ -108,202 +141,377 @@ reward = (
 with:
 
 - `alignment_term = max(cos(misalignment_rad)^3, 0.0)`
-- `misalignment_penalty = 1.10 * (abs(misalignment)/180)^2`
-- `movement_penalty = 0.08 * abs(yaw_change_applied)`
-- `switch_penalty = 0.25 * switched_direction`
-- `rapid_flip_penalty = 0.08` if direction flips while previous yaw change was nonzero
-- `alignment_bonus = 0.12` if `abs(misalignment) <= 5 deg`
+- `rapid_flip_penalty = 0.05` when a direction flip follows a nonzero yaw change
+- `alignment_bonus = 0.15` when `abs(misalignment) <= 5 deg`
 
-### Training (latest target config)
+The reward was not changed during the neural-network upgrade. Training reward
+is a shaped control signal; it is not the same quantity as physical energy.
+
+---
+
+## 6) Original hyperparameters (preserved)
 
 - DQN episodes: `2200`
 - Q-learning episodes: `500`
 - Steps per episode: `1000`
-- DQN learning rate: `3e-4`
+- Replay buffer: `50,000`
+- Batch size: `256`
+- Train start: after `2,000` transitions
+- Target update: every `250` steps
+- Epsilon: `1.0 -> 0.05` over `1,500` episodes
+- Learning rate: `3e-4`
 - Gamma: `0.99`
-- Epsilon: `1.0 -> 0.05`, decay over first `1500` episodes
-- Replay buffer: `50000`
-- Batch size: `128`
-- Train start after: `2000` transitions
-- Target update every: `250` steps
 - Gradient clipping: `5.0`
 
----
-
-## 5) Dual-Mode Power Model
-
-### Normalized mode (for RL)
-
-\[
-P = 0.5 \cdot v^3 \cdot \cos(\theta)^3
-\]
-
-### Physical mode (for reporting)
-
-\[
-P = 0.5 \cdot \rho \cdot A \cdot C_p \cdot v^3 \cdot \cos(\theta)^3
-\]
-
-Constants:
-
-- `rho = 1.225 kg/m^3`
-- `Cp = 0.4`
-- `R = 40 m`
-- `A = pi * R^2`
+Reduced-budget experiment profiles override episodes, steps, epsilon schedule,
+batch size and buffer size. All algorithms inside a comparison use the same
+settings, and reduced runs are labelled in every CSV.
 
 ---
 
-## 6) Latest Recorded Results
+## 7) Installation
 
-### Kaggle Full Training Run (reported)
-
-- Device: `cuda (Tesla T4)`
-- Random baseline reward: `37.695`
-- Q-learning Avg(last 50): `55.056`
-- DQN Avg(last 50): `38.590`
-- DQN improvement over random (train summary): `+0.895`
-
-### Kaggle Evaluation (`rl/evaluate.py --episodes 50`)
-
-- Random mean: `45.766 +/- 24.243`
-- DQN mean: `51.636 +/- 33.067`
-- Improvement: `+5.870`
-- Result: `PASS (DQN better than random)`
-
-### Baseline Comparison (current local `evaluation/analysis.py`)
-
-Normalized average power (mean +/- std):
-
-- Rule: `159.652 +/- 51.915`
-- PID: `157.750 +/- 52.941`
-- RL: `128.925 +/- 47.137`
-
-Physical average power (mean +/- std, W):
-
-- Rule: `393225.288 +/- 127867.110`
-- PID: `388540.507 +/- 130393.476`
-- RL: `317542.498 +/- 116099.619`
-
-Control behavior (mean):
-
-- Yaw movement count: Rule `995.3`, PID `997.0`, RL `720.7`
-- Oscillation count: Rule `35.5`, PID `30.7`, RL `122.3`
-
-Note: RL currently reduces movement but underperforms PID/Rule in energy on local baseline outputs. Reward/training updates were applied to improve this in the next retrain cycle.
-
-### Latest retrain status (new config run)
-
-From the current `rl/logs.csv` generated with updated reward/training configuration:
-
-- Logged rows: `2700`
-  - Q-learning episodes: `500`
-  - DQN episodes: `2200`
-- Epsilon schedule verified in logs:
-  - starts at `1.0`
-  - decays linearly to about `0.05` by episode `1500`
-  - remains `0.05` thereafter
-- Current DQN rolling reward remains low in this run:
-  - `average_reward_50` at final episode is negative
-
-Interpretation: the code/config update is correctly applied, but this particular training run did not yet achieve stable high reward and needs another tuning/retrain iteration.
-
----
-
-## 7) How to Run
-
-### Train
+Python 3.10+ is recommended.
 
 ```bash
-python rl/train.py --q-episodes 500 --dqn-episodes 2200 --steps-per-episode 1000 --eval-random-episodes 20
+pip install -r requirements.txt
 ```
 
-### Evaluate RL vs Random
+Core dependencies: `torch`, `numpy`, `pandas`, `matplotlib`, `gymnasium`,
+`streamlit`, `tensorboard`, `pytest`. CUDA is used automatically when
+available; CPU execution is fully supported.
+
+---
+
+## 8) Commands
+
+All commands are run from the project root (`yaw_ai_project/`).
+
+### Train DQN (original command still works)
+
+```bash
+python rl/train.py --q-episodes 500 --dqn-episodes 2200 \
+  --steps-per-episode 1000 --eval-random-episodes 20
+```
+
+This writes `rl/model.pth` and `rl/logs.csv`, as before, and additionally
+writes real metrics to `results/training/`.
+
+### Train DQN and Double DQN
+
+```bash
+python rl/train.py --algorithm both \
+  --q-episodes 500 --dqn-episodes 2200 --steps-per-episode 1000 \
+  --metrics-dir results/training \
+  --model-path results/models/dqn.pth \
+  --double-model-path results/models/double_dqn.pth \
+  --tensorboard-dir results/tensorboard
+```
+
+### Train Double DQN only
+
+```bash
+python rl/train_double_dqn.py \
+  --episodes 2200 --steps-per-episode 1000 --seed 42 \
+  --tensorboard-dir results/tensorboard
+```
+
+### TensorBoard
+
+```bash
+tensorboard --logdir results/tensorboard
+```
+
+CSV logging continues to work when TensorBoard is disabled. To visualize the
+real values from CSV logs produced without TensorBoard:
+
+```bash
+python rl/export_tensorboard.py \
+  --metrics-dir results/training \
+  --tensorboard-dir results/tensorboard \
+  --prefixes dqn,double_dqn
+```
+
+### Generate training plots
+
+```bash
+python rl/visualize_training.py \
+  --metrics-dir results/training \
+  --plots-dir results/plots
+```
+
+### Ablation study
+
+```bash
+python rl/experiments.py --mode ablation --profile reduced --seeds 0
+```
+
+Variants: `standard_dqn`, `no_replay`, `no_target_network`, `double_dqn`.
+
+### Multi-seed evaluation
+
+```bash
+python rl/experiments.py --mode multi_seed --profile reduced \
+  --seeds 0,1,2,3,4 --algorithms dqn,double_dqn
+```
+
+### Evaluate all six controllers
+
+```bash
+python evaluation/agent_evaluation.py \
+  --episodes 10 \
+  --q-episodes 500 \
+  --dqn-model results/models/dqn.pth \
+  --double-dqn-model results/models/double_dqn.pth
+```
+
+### Legacy comparison (original continuous Rule/PID behavior)
+
+```bash
+python evaluation/compare_controllers.py --runs 10 --steps 1000 \
+  --model-path rl/model.pth
+```
+
+### Legacy DQN vs Random evaluation
 
 ```bash
 python rl/evaluate.py --episodes 50
 ```
 
-### Run Baselines (Rule/PID/RL)
-
-```bash
-python evaluation/baseline.py --runs 10 --steps 1000 --seed-list 42,43,44,45,46,47,48,49,50,51 --model-path rl/model.pth --out-path evaluation/results.csv
-python evaluation/analysis.py
-```
-
-### Generate Plots
-
-```bash
-python visualization/generate_plots.py
-python evaluation/plot_controller_comparison.py
-python rl/plot_training.py
-```
-
-### Launch Dashboard
+### Dashboard
 
 ```bash
 streamlit run dashboard/app.py
 ```
 
----
+### Tests
 
-## 8) Output Artifacts
-
-- Model and logs:
-  - `rl/model.pth`
-  - `rl/logs.csv`
-- Evaluation:
-  - `evaluation/results.csv`
-  - `evaluation/analysis_summary.csv`
-- Visualization:
-  - `visualization/plots/normalized_reward_vs_episodes.png`
-  - `visualization/plots/physical_energy_comparison.png`
-  - `visualization/plots/physical_power_comparison.png`
-- Paper draft:
-  - `paper/document`
+```bash
+python -m pytest tests -q
+```
 
 ---
 
-## 9) Next Validation Targets
+## 9) Output layout
 
-- Retrain with latest reward/config and re-run full baseline evaluation
-- Target outcomes:
-  - RL energy >= PID
-  - RL yaw movement < PID
-  - RL oscillation substantially reduced vs previous RL checkpoint
+```text
+results/
+  training/
+    dqn_metrics.csv                 # step-level DQN metrics
+    dqn_episodes.csv                # episode-level DQN metrics
+    double_dqn_metrics.csv          # step-level Double DQN metrics
+    double_dqn_episodes.csv         # episode-level Double DQN metrics
+    training_summary.csv            # one row per run
+    runs/<run_name>/                # per-experiment logs
+  evaluation/
+    controller_comparison.csv       # per-episode controller metrics
+    controller_comparison_summary.csv
+    ablation_results.csv
+    ablation_summary.csv
+    multi_seed_results.csv
+    multi_seed_summary.csv
+  models/
+    dqn.pth
+    double_dqn.pth
+    q_table.npz
+    <variant>_seed<seed>.pth
+  plots/
+    network_architecture.png
+    dqn_reward.png
+    dqn_loss.png
+    dqn_epsilon.png
+    dqn_q_values.png
+    dqn_gradient_norm.png
+    dqn_episode_length.png
+    training_time_comparison.png
+    dqn_vs_double_dqn.png
+    ablation_comparison.png
+    multi_seed_comparison.png
+    controller_comparison.png
+  tensorboard/
+```
+
+Original artifacts are preserved:
+
+- `rl/model.pth`, `rl/logs.csv`
+- `results/logs.csv`, `results/model.pth`
+- `results/controller_comparison_runs.csv`,
+  `results/controller_comparison_summary.csv`
 
 ---
 
-## 10) Update Timeline
+## 10) Results
 
-### Phase A - Foundation Complete
-- Implemented wind, turbine, and power simulation modules.
-- Added dual-mode power equations (`normalized`, `physical`).
-- Built Gym-style RL environment with 5D normalized state and 3 discrete actions.
+### 10.1 Original controller results (preserved)
 
-### Phase B - Training and Evaluation Stack
-- Added Q-learning baseline and DQN trainer.
-- Added model checkpoint + training logs outputs (`rl/model.pth`, `rl/logs.csv`).
-- Added baseline comparison pipeline (Rule/PID/RL) and statistics (`evaluation/results.csv`, `evaluation/analysis_summary.csv`).
+These are the project's original continuous-action comparison results. They
+are retained unchanged for provenance. Source:
+`results/controller_comparison_summary.csv`.
 
-### Phase C - Visualization and Reporting
-- Added normalized and physical plots under `visualization/plots`.
-- Added Streamlit dashboard (`dashboard/app.py`) with robust path inputs.
-- Added paper draft (`paper/document`) with all required sections.
+Normalized average power (mean +/- std):
 
-### Phase D - Reward/Training Optimization Updates (Most Recent)
-- Updated reward shaping in `env/environment.py` to:
-  - stronger alignment term (`+0.60 * alignment_term`)
-  - stronger misalignment penalty (`1.10 * normalized_error^2`)
-  - lower movement penalty coefficient (`0.08`)
-  - stronger switch penalty (`0.25`) + rapid flip penalty (`0.08`)
-  - alignment bonus (`+0.12` for `|misalignment| <= 5 deg`)
-- Updated DQN training constants in `rl/train.py`:
-  - episodes `2200`
-  - learning rate `3e-4`
-  - epsilon `1.0 -> 0.05` with decay cap at `1500`
-  - replay buffer `50000`, batch size `128`
-  - train start `2000`, target update `250`, grad clip `5.0`
+| Controller | Average power (normalized) | Average power (physical, W) |
+|---|---:|---:|
+| Rule | 159.652 +/- 49.251 | 393,225 +/- 121,305 |
+| PID | 157.750 +/- 50.224 | 388,541 +/- 123,702 |
+| RL (original DQN) | 135.216 +/- 36.101 | 333,038 +/- 88,917 |
 
-### Phase E - Current Outcome Snapshot
-- Configuration updates are active and verified from code and logs.
-- Latest run indicates training still unstable (final DQN rolling reward negative), so additional retraining/tuning is still pending.
+An earlier evaluation stored in `evaluation/analysis_summary.csv` recorded the
+original RL checkpoint at `128.925 +/- 47.137` normalized and
+`317,542 +/- 116,100 W`; both legacy files are preserved. The difference comes
+from separate legacy evaluation runs and is not hidden.
+
+Control behavior:
+
+| Controller | Yaw movement frequency | Control stability | Mean abs misalignment |
+|---|---:|---:|---:|
+| Rule | 0.9953 | 0.4650 | 86.236 deg |
+| PID | 0.9970 | 0.4758 | 86.777 deg |
+| RL | 0.9885 | 0.3862 | 91.450 deg |
+
+Interpretation: the original RL checkpoint reduces yaw movement and control
+variance but underperforms Rule/PID in energy capture. This is reported
+honestly and is not hidden by the upgrade.
+
+### 10.2 Ablation study (reduced budget, seed 0)
+
+Measured on identical evaluation seeds. Reduced budget: 80 episodes x 300
+training steps, not the full 2,200 x 1,000 configuration. Evaluation still uses
+complete 1,000-step episodes, so reduced training and evaluation episode lengths
+differ; this is one more reason the table is indicative rather than definitive.
+
+| Variant | Eval reward | Norm. power | Physical power (W) | Mean abs misalign. | Yaw freq. | Max grad norm |
+|---|---:|---:|---:|---:|---:|---:|
+| `standard_dqn` | -17.32 | 119.75 | 294,940 | 94.21 deg | 0.832 | 140.6 |
+| `no_replay` | 121.77 | 159.02 | 391,663 | 86.77 deg | 0.349 | 675.6 |
+| `no_target_network` | -199.19 | 52.56 | 129,464 | 111.83 deg | 0.719 | 118.7 |
+| `double_dqn` | 44.00 | 141.28 | 347,983 | 92.50 deg | 0.842 | 141.0 |
+
+Observations from this single seed:
+
+- Removing replay produced the best evaluation power in this reduced run, but
+  the online update is high-variance; one seed is not evidence of superiority.
+- Removing the target network was unstable and produced the worst evaluation
+  power.
+- Double DQN was better than standard DQN in this run, but the difference is
+  not established without multiple seeds.
+- These reduced-budget results must not be presented as full-training results.
+
+### 10.3 Multi-seed results (reduced budget, 5 seeds)
+
+Measured on identical evaluation seeds (5 eval episodes). Reduced profile:
+80 episodes x 300 training steps, 300-step truncation in the training loop while
+evaluation runs full 1,000-step episodes. DQN and Double DQN share the same
+reduced budget and same seeds.
+
+| Algorithm | Eval reward (mean +/- std) | Norm. power | Physical power (W) | Mean abs misalign. | Yaw freq. | Control stability |
+|---|---:|---:|---:|---:|---:|---:|
+| `dqn` | -14.675 +/- 95.522 | 116.009 | 285,732 | 95.302 deg | 0.809 | 0.268 |
+| `double_dqn` | -104.307 +/- 131.796 | 86.939 | 214,131 | 102.591 deg | 0.889 | 0.314 |
+
+Per-seed eval rewards (seed 0-4): DQN = `-92.362, 77.307, 76.255, -3.266, -131.309`; Double DQN =
+`-31.581, 89.975, -185.847, -233.080, -161.003`. Paired difference (Double DQN - DQN):
+mean = `-89.63`, std = `146.70`, approximate 95% CI ~ `[-218, +39]` (wide, overlaps zero).
+No claim of superiority is made; in this reduced 5-seed run DQN performs better on
+average than Double DQN.
+
+Full per-seed table: `results/evaluation/multi_seed_results.csv`. Aggregated
+stats: `results/evaluation/multi_seed_summary.csv`.
+
+### 10.4 Six-controller comparison (unified, discrete projection)
+
+Evaluated with `evaluation/agent_evaluation.py` on identical wind traces
+(10 episodes). RL agents use checkpoints from the reduced-budget runs above.
+Rule/PID are projected onto discrete actions with a `0.5°` dead-band; the
+original continuous comparisons are preserved in §10.1.
+
+| Controller | Eval reward (mean +/- std) | Norm. power | Physical power (W) | Mean abs misalign. | Yaw freq. | Time within 10° | Inference (ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `random` | -63.30 +/- 85.32 | 123.42 | 303,988 | 92.88 deg | 0.996 | 0.049 | 0.000 |
+| `q_learning` | -3.22 +/- 95.06 | 131.44 | 323,741 | 91.68 deg | 0.992 | 0.061 | 0.029 |
+| `dqn` | -155.95 +/- 119.15 | 71.67 | 176,519 | 106.08 deg | 0.860 | 0.033 | 0.245 |
+| `double_dqn` | -111.37 +/- 133.58 | 79.65 | 196,169 | 103.03 deg | 0.828 | 0.039 | 0.241 |
+| `rule` | 206.21 +/- 105.24 | 201.91 | 497,314 | 76.19 deg | 0.995 | 0.093 | 0.000 |
+| `pid` | 187.60 +/- 108.91 | 198.90 | 489,884 | 76.77 deg | 0.997 | 0.093 | 0.000 |
+
+Note: Q-learning baseline was trained separately (500 episodes x 1,000 steps)
+as recorded in `results/models/q_table.npz`; DQN/Double DQN above use reduced
+80x300 training. Rule/PID are projected to discrete actions for unified
+comparison - different from their original continuous-action baselines. See
+`results/evaluation/controller_comparison_summary.csv` for full stats.
+
+---
+
+## 11) Why training reward is not physical power
+
+The reward includes power, alignment shaping, movement penalties, switching
+penalties and a small-alignment bonus. A policy can increase reward by holding
+still, even when that leaves a large misalignment and reduces physical energy.
+Training reward is also measured under epsilon-greedy exploration, while
+evaluation is greedy and uses different wind traces. For these reasons,
+training and evaluation metrics are reported in separate sections and files.
+
+---
+
+## 12) Experimental limitations
+
+- Full 2,200-episode x 1,000-step multi-seed training is expensive on CPU. The
+  multi-seed and ablation tables above use the documented reduced profile.
+- Reduced-budget rankings are indicative, not definitive.
+- Rule and PID are projected onto the discrete action set for the unified
+  comparison; the original continuous results are preserved separately.
+- CUDA determinism is best-effort. Exact bitwise reproduction across different
+  GPUs is not guaranteed.
+- No claim is made that Double DQN outperforms DQN unless the measured
+  multi-seed results support it.
+- The PPO/farm/wake code in the repository is a separate track and is not part
+  of the main DQN comparison.
+
+---
+
+## 13) Repository structure
+
+```text
+simulation/     wind field, wind series, turbine and power models
+env/            Gym-style yaw environment
+rl/             agents, trainer, metrics, training, experiments, visualization
+evaluation/     controller comparison and legacy evaluation scripts
+dashboard/      Streamlit dashboard
+tests/          pytest suite
+docs/           technical documentation
+results/        generated metrics, summaries, models and plots
+data/           ERA5 wind dataset
+visualization/  legacy plots
+paper/          paper draft
+```
+
+---
+
+## 14) Tests
+
+```bash
+python -m pytest tests -q
+```
+
+The suite covers:
+
+- Network input/output shapes and parameter counts.
+- Replay buffer add, sample and capacity.
+- DQN action selection and exploration.
+- DQN training update and real metric values.
+- Standard and Double DQN target calculations.
+- Terminal-transition handling.
+- Target-network synchronisation.
+- Checkpoint save/load and hidden-size inference.
+- Seeded reproducibility of networks, actions and environment resets.
+- CSV metric logging.
+
+The exact test count and result are reported in the final change summary.
+
+---
+
+## 15) Documentation
+
+- [`docs/NEURAL_NETWORK.md`](docs/NEURAL_NETWORK.md) - full neural-network,
+  DQN, Double DQN, metrics, ablation and reproducibility documentation.
+- `paper/document` - original paper draft.

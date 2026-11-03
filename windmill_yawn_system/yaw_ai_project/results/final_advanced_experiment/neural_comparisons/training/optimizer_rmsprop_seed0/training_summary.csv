@@ -1,0 +1,2 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+optimizer_rmsprop,optimizer_rmsprop_seed0,0,80,300,24000,23499,66.07667350000702,-70.65487099185879,-74.24141943741128,-74.24141943741128,5.363563986412781,46.14892466347109,17667,cpu,2026-11-02T22:45:09,reduced experimental budget

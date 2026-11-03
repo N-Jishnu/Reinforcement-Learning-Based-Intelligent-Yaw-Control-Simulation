@@ -72,6 +72,7 @@ class YawRLEnvironment(gym.Env):
             duration=MAX_STEPS,
             dt=TIME_STEP,
             data_path=self.data_path,
+            seed=seed,
         )
 
         self.turbine = TurbineModel(initial_yaw=0.0)
@@ -147,5 +148,9 @@ class YawRLEnvironment(gym.Env):
             "alignment_term": float(alignment_term),
             "alignment_bonus": float(alignment_bonus),
             "rapid_flip_penalty": float(rapid_flip_penalty),
+            # Added for physical-power and diagnostic evaluation.  These
+            # fields are additive and do not change the environment dynamics.
+            "wind_speed": float(wind_speed),
+            "wind_direction": float(wind_direction),
         }
         return obs, float(reward), terminated, truncated, info

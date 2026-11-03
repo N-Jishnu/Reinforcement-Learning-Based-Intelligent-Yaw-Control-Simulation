@@ -1,0 +1,2 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+no_replay,no_replay_seed0,0,80,300,24000,23499,52.55688220006414,-53.63443173652251,-75.05447418253954,-75.05447418253954,7.278172753067955,27.094155295902794,17667,cpu,2026-11-02T21:36:57,reduced experimental budget

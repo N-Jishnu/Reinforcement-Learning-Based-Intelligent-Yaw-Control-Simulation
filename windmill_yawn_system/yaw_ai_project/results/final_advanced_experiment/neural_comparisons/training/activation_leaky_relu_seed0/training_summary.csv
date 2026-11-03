@@ -1,0 +1,2 @@
+algorithm,run_name,seed,episodes,steps_per_episode,total_steps,total_optimization_steps,wall_time_s,final_episode_reward,final_avg_reward_50,best_avg_reward_50,mean_loss,mean_grad_norm,total_trainable_parameters,device,timestamp,notes
+activation_leaky_relu,activation_leaky_relu_seed0,0,80,300,24000,23499,70.22716010012664,-68.44629924830545,-76.89814300066617,-76.89814300066617,5.3581873010548335,41.96129921488132,17667,cpu,2026-11-02T23:02:14,reduced experimental budget

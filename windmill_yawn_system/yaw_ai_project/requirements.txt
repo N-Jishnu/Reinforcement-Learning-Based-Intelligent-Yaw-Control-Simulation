@@ -1,0 +1,8 @@
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.7
+torch>=2.0
+gymnasium>=0.29
+streamlit>=1.30
+tensorboard>=2.14
+pytest>=8.0
