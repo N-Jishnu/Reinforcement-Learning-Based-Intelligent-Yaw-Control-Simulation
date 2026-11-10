@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "/": {
+      "targetKind": "existing-ui",
+      "projectId": "8707f88b-5ba1-4129-9fc9-6a45a6e7bc28",
+      "baselineDraftId": "c2d52836-a834-4389-bbe5-ebb2d08c313d",
+      "activeDraftId": "c2d52836-a834-4389-bbe5-ebb2d08c313d",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        "dashboard/app.py",
+        ".superdesign/design-system.md"
+      ],
+      "fingerprints": {
+        "dashboard/app.py": "825832aba4125012931124a3bff28320acb9f23fb6c4640da27f199a2ed1af61",
+        ".superdesign/design-system.md": "4c7e4d267c2554e29ab549330c9e6db27d283abfa47eeef4eafb995ea8a2e10d"
+      },
+      "drafts": {
+        "c2d52836-a834-4389-bbe5-ebb2d08c313d": {
+          "title": "Wind Turbine Yaw Control Research Dashboard",
+          "visualDirection": "implemented scientific analytics dashboard with switchable light and dark themes",
+          "currentVersion": 3
+        }
+      },
+      "updatedAt": "2026-11-10T05:22:00Z"
+    }
+  }
+}
